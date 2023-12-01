@@ -1,0 +1,128 @@
+from osgeo import gdal
+import numpy as np
+import os
+import random
+from tqdm import tqdm
+ 
+#step1: read the image and set the outpath
+
+# 分块影像所在文件夹，不能有中文
+tifDir = r"E:\GF-image"
+# 输出的文件夹，不能有中文，如果文件夹不存在则会被创建
+outPath = r"E:\GF-imageout\images"
+if not os.path.exists(outPath):
+    os.makedirs(outPath)
+ 
+tifs = [i for i in os.listdir(tifDir) if i.endswith(".tif")]
+ 
+print("有 %s 个tif文件" % len(tifs))
+print("tifs",tifs)
+
+# step2: clip the image to 256x256
+# 定义切图的大小（矩形框）
+size = 256
+for img in range(len(tifs)):
+    # print("正在分割：",tifs[img])
+    in_ds = gdal.Open(tifDir + "\\" + tifs[img])              # 读取要切的原图
+ 
+    width = in_ds.RasterXSize  # 获取数据宽度
+    height = in_ds.RasterYSize  # 获取数据高度
+    outbandsize = in_ds.RasterCount  # 获取数据波段数
+    im_geotrans = in_ds.GetGeoTransform()  # 获取仿射矩阵信息
+    im_proj = in_ds.GetProjection()  # 获取投影信息
+    datatype = in_ds.GetRasterBand(1).DataType
+    dataTYpe = gdal.GetDataTypeName(datatype)
+ 
+    col_num = int(width / size)  # 宽度可以分成几块
+    row_num = int(height / size)  # 高度可以分成几块
+    if (width % size != 0):
+        col_num += 1
+    if (height % size != 0):
+        row_num += 1
+    data = in_ds.ReadAsArray(0, 0, width, height)
+    nir_img = data[1:4,:,:]
+    nir_img = np.where(nir_img == 65535, np.nan, nir_img) #把65535都设为nan
+    #做2.5倍标准差拉伸
+    g = nir_img[0,:,:]
+    g_mean = np.nanmean(g)
+    g_std = np.nanstd(g)
+    g_min = g_mean - 2 * g_std
+    g_max = g_mean + 2 * g_std
+
+    r = nir_img[1,:,:]
+    r_mean = np.nanmean(r)
+    r_std = np.nanstd(r)
+    r_min = r_mean - 2 * r_std
+    r_max = r_mean + 2 * r_std
+
+    nir = nir_img[2,:,:]
+    nir_mean = np.nanmean(nir)
+    nir_std = np.nanstd(nir)
+    nir_min = nir_mean - 2 * nir_std
+    nir_max = nir_mean + 2 * nir_std
+ 
+    print("row_num:%d   col_num:%d" % (row_num, col_num))
+    for i in tqdm(range(row_num)):  
+        for j in range(col_num):
+            offset_x = j * size
+            offset_y = i * size
+            ## 从每个波段中切需要的矩形框内的数据(注意读取的矩形框不能超过原图大小)
+            b_xsize = min(width - offset_x, size)
+            b_ysize = min(height - offset_y, size)
+ 
+            #裁剪影像矩阵
+            im_data = in_ds.ReadAsArray(offset_x, offset_y, b_xsize, b_ysize)
+            im_data = np.where(im_data == 65535, np.nan, im_data)
+            im_data = np.clip(im_data, d_min, d_max)
+            g = im_data[1,:,:]
+            g = 255*(g-g_min)/(g_max-g_min)  #这里应该计算全局的最大和最小
+            r = im_data[2,:,:]
+            r = 255*(r-r_min)/(r_max-r_min)
+            nir = im_data[3,:,:]
+            nir = 255*(nir-nir_min)/(nir_max-nir_min)
+
+            out_allband = np.array([nir,r,g])
+            # local_min = np.nanmin(out_allband)
+            # local_max = np.nanmax(out_allband)
+            # out_allband = (out_allband-local_min)/(local_max-local_min)
+            # out_allband = out_allband*255
+ 
+            # 获取Tif的驱动，为创建切出来的图文件做准备
+            gtif_driver = gdal.GetDriverByName("GTiff")
+            file = outPath+"\\"+str(i)+"-"+str(j)+".tif"
+ 
+            # 创建切出来的要存的文件
+            out_ds = gtif_driver.Create(file, b_xsize, b_ysize, 3, gdal.GDT_Byte)
+            # print("create new tif file succeed")
+ 
+            # 获取原图的原点坐标信息
+            ori_transform = in_ds.GetGeoTransform()
+ 
+            # 读取原图仿射变换参数值
+            top_left_x = ori_transform[0]  # 左上角x坐标
+            w_e_pixel_resolution = ori_transform[1]  # 东西方向像素分辨率
+            top_left_y = ori_transform[3]  # 左上角y坐标
+            n_s_pixel_resolution = ori_transform[5]  # 南北方向像素分辨率
+ 
+            # 根据仿射变换参数计算新图的原点坐标
+            top_left_x = top_left_x + offset_x * w_e_pixel_resolution
+            top_left_y = top_left_y + offset_y * n_s_pixel_resolution
+ 
+            # 将计算后的值组装为一个元组，以方便设置
+            dst_transform = (
+            top_left_x, ori_transform[1], ori_transform[2], top_left_y, ori_transform[4], ori_transform[5])
+ 
+            # 设置裁剪出来图的原点坐标
+            out_ds.SetGeoTransform(dst_transform)
+ 
+            # 设置SRS属性（投影信息）
+            out_ds.SetProjection(in_ds.GetProjection())
+ 
+            # 写入目标文件
+            for ii in range(outbandsize-1):
+                out_ds.GetRasterBand(ii+1).WriteArray(out_allband[ii])
+ 
+            # 将缓存写入磁盘
+            out_ds.FlushCache()
+            # print("FlushCache succeed")
+            del out_ds
