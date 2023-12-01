@@ -1,0 +1,66 @@
+import json
+import geopandas as gpd
+from shapely.geometry import Polygon
+from osgeo import gdal
+import glob
+from tqdm import tqdm
+import os
+
+# 批量读取 Labelme 导出的 JSON 文件
+folder_path = './terrace_data/'
+json_paths = glob.glob(folder_path + '*.json')
+json_paths
+
+error_path_list = []
+
+def labelme_json_to_shapefile(labelme_json_path, output_shapefile_path):
+    with open(labelme_json_path, 'r') as f:
+        data = json.load(f)
+    #读取跟json文件相关的影像信息
+    image_width = data['imageWidth']
+    image_height = data['imageHeight']
+    geometries = []
+
+    imagepath = folder_path + data['imagePath'].split('\\')[-1]
+    image = gdal.Open(imagepath)
+
+    geotrans = image.GetGeoTransform()
+    x0 = geotrans[0]
+    y0 = geotrans[3]
+    x_resolution = geotrans[1]
+    y_resolution = geotrans[5]
+
+    # 处理每个标注对象
+    for shape in data['shapes']:
+        label = shape['label']
+        points = shape['points']
+        
+        # 将相对坐标转换为绝对坐标
+        polygon_coords = [(x0+point[0]*x_resolution, y0+point[1]*y_resolution) for point in points]
+        
+        # 创建 shapely Polygon 对象
+        polygon = Polygon(polygon_coords)
+        
+        # 添加到 geometries 列表中
+        geometries.append({'label': label, 'geometry': polygon})
+
+    # 创建 GeoDataFrame
+    gdf = gpd.GeoDataFrame(geometries, geometry='geometry')
+    gdf.crs = 'EPSG:4326'
+    gdf.to_file(output_shapefile_path, driver='ESRI Shapefile')
+
+for json_path in tqdm(json_paths):
+    out_folder_path = './terrace_data/shapefile'
+    if not os.path.exists(out_folder_path):
+        os.makedirs(out_folder_path)
+    output_shp_path = out_folder_path + '/' + json_path.split('\\')[-1].replace('.json', '.shp')
+    try:
+        labelme_json_to_shapefile(json_path, output_shp_path)
+    except Exception as e:
+        error_path_list.append(json_path)
+        pass
+#打印无法转换的错误json列表
+print('error_path_list:',error_path_list)
+
+
+    
