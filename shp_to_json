@@ -1,0 +1,27 @@
+#导入相应的库
+import geopandas as gpd 
+import os 
+from tqdm import tqdm
+import time
+
+#找到所有待转换的shp的文件的路径
+shpdir = r"E:\GF-imageout\shapefile"
+outpath = r"E:\GF-imageout\json"
+if not os.path.exists(outpath):
+    os.makedirs(outpath)
+
+shps = [i for i in os.listdir(shpdir) if i.endswith(".shp")]
+
+print("有 %s 个shapefile文件" % len(shps))
+print("shps:",shps)
+
+t1 = time.process_time()
+with tqdm(total = len(shps)) as pbar:
+    for i in range(len(shps)):
+        in_shp = gpd.read_file(os.path.join(shpdir,shps[i]))
+        output_file = outpath+"\\"+shps[i].split(".")[0]+".json"
+        in_shp.to_file(output_file, driver='GeoJSON',encoding = 'utf-8')
+        time.sleep(0.1)
+        pbar.update(1)
+t2 = time.process_time()
+print("总共耗时:",(t2-t1))
