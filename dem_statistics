@@ -1,0 +1,57 @@
+from osgeo import gdal
+import numpy as np
+import pandas as pd
+from tqdm import tqdm
+import time
+
+def calculate_area_percentage_by_interval(input_raster, interval):
+    # Open the raster dataset
+    dataset = gdal.Open(input_raster)
+    if not dataset:
+        print("Error: Could not open the raster dataset.")
+        return
+
+    # Read the raster data into a NumPy array
+    raster_array = dataset.ReadAsArray()
+    raster_array[raster_array == -9999] = np.nan
+    raster_array[raster_array <= 0] = np.nan
+
+    # Determine the minimum and maximum values in the raster array
+    min_height, max_height = np.nanmin(raster_array), np.nanmax(raster_array)
+    # Define the height intervals
+    height_intervals = np.arange(min_height, max_height + interval, interval)
+
+    # Count the number of pixels in each height interval
+    pixel_counts = []
+    for i in tqdm(range(len(height_intervals) - 1)):
+        lower_bound, upper_bound = height_intervals[i], height_intervals[i + 1]
+        count = np.sum(raster_array >= lower_bound)
+        pixel_counts.append(count)
+        time.sleep(0.01)
+
+    # Calculate the total number of pixels
+    total_pixels = np.sum(~np.isnan(raster_array))
+
+    # Calculate the percentage of pixels in each interval
+    percentages = [count / total_pixels for count in pixel_counts]
+    height_range = (height_intervals - min_height)/(max_height - min_height)
+
+    df = pd.DataFrame({"Height Range": height_range[:-1], "Percentage": percentages})
+    # df.to_csv("output.csv", index=False)
+
+    return df
+
+    # # Print the results
+    # for i in range(len(height_intervals) - 1):
+    #     lower_bound, upper_bound = height_intervals[i], height_intervals[i + 1]
+    #     print(f"Height Range: {lower_bound}m - {upper_bound}m, Percentage: {percentages[i]}%")
+
+if __name__ == "__main__":
+    # Replace 'path/to/your/input_raster.tif' with the path to your raster dataset
+    input_raster = "../dsm_resample.tif"
+    
+    # Replace 1.0 with the desired interval in meters
+    interval = 1.0
+    
+    df = calculate_area_percentage_by_interval(input_raster, interval)
+    df.to_csv("dsm_area_percentage.csv", index=False)
